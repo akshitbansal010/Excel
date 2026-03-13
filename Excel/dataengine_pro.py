@@ -9,19 +9,21 @@ pip install rich pandas numpy openpyxl rapidfuzz
 
 Run:
     python dataengine_pro.py
-    python data_engine.py --db my_database.db
+    python dataengine_pro.py --db my_database.db
 """
 
-# ── Auto-install deps ──────────────────────────────────────────────────────────
-import subprocess, sys
+# ── Runtime dependency check ──────────────────────────────────────────────────
+import sys
 
 def _ensure(pkg, import_as=None):
     name = import_as or pkg
     try:
         __import__(name)
-    except ImportError:
-        print(f"Installing {pkg}...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet"])
+    except ImportError as e:
+        raise RuntimeError(
+            f"Missing required dependency '{pkg}'. Install using 'pip install {pkg}' and restart." 
+            f" Original error: {e}"
+        )
 
 for _p, _i in [("rich","rich"),("rapidfuzz","rapidfuzz"),("openpyxl","openpyxl")]:
     _ensure(_p, _i)
@@ -68,16 +70,22 @@ def startup(cli_db: str = None) -> Session:
             t.add_column("File", style="white")
             console.print("\n[bold]Databases found:[/bold]")
             for i, db in enumerate(dbs):
-                kb = os.path.getsize(db)/1024
-                t.add_row(str(i+1), f"{db}  [dim]({kb:,.0f} KB)[/dim]")
+                try:
+                    kb = os.path.getsize(db) / 1024
+                    size_label = f"({kb:,.0f} KB)"
+                except OSError:
+                    size_label = "[inaccessible]"
+                t.add_row(str(i+1), f"{db}  [dim]{size_label}[/dim]")
             console.print(t)
             console.print("  [dim]N = custom path[/dim]")
             c = Prompt.ask("Pick DB", default="1")
             if c.upper() == "N":
                 db_path = Prompt.ask("Path to .db file")
             else:
-                try:    db_path = dbs[int(c)-1]
-                except: db_path = c
+                try:
+                    db_path = dbs[int(c)-1]
+                except (ValueError, IndexError):
+                    db_path = c
         else:
             console.print("[yellow]No .db files found here.[/yellow]")
             db_path = Prompt.ask("Full path to SQLite database")
@@ -99,8 +107,10 @@ def startup(cli_db: str = None) -> Session:
     console.print(t)
 
     c = Prompt.ask("Pick table", default="1")
-    try:    table_name = tables[int(c)-1]
-    except: table_name = c
+    try:
+        table_name = tables[int(c)-1]
+    except (ValueError, IndexError):
+        table_name = c
 
     console.print(f"\n[dim]Loading [bold]{table_name}[/bold]…[/dim]")
     df = db_load(db_path, table_name)
@@ -208,6 +218,15 @@ def main():
             elif choice == "L": sess.push_undo(); sess.df = ops.op_edit_row(sess)   # 1.5 Row Edit
             elif choice == "B": sess.push_undo(); sess.df = ops.op_calculated_columns(sess)  # 1.6 Calc Columns
             elif choice == "Y": sess.push_undo(); sess.df = ops.op_filter_by_color(sess)  # Filter by Flag
+
+            # PHASE 2 - POWER USER ANALYSIS
+            elif choice == "D": ops.op_profile(sess)   # 2.1 Quick Profile Report
+            elif choice == "X": sess.push_undo(); sess.df = ops.op_outlier_detection(sess)  # 2.2 Outlier Detection
+            elif choice == "V": ops.op_correlation_matrix(sess)  # 2.3 Correlation Matrix
+            elif choice == "Q": ops.op_crosstab(sess)  # 2.4 Cross-Tab / Frequency Table
+            elif choice == "]": sess.push_undo(); sess.df = ops.op_segment_column(sess)  # 2.5 Segment/Bin Numeric
+            elif choice == "A": sess.push_undo(); sess.df = ops.op_time_series(sess)  # 2.6 Time Series Analysis
+            elif choice == "=": ops.op_string_analysis(sess)  # 2.7 String Analysis
 
             # TABLE MANAGER
             elif choice == "T": ops.op_table_manager(sess)

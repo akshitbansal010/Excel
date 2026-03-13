@@ -4,7 +4,7 @@ Session management - holds all dataframes, undo history, and active table pointe
 
 import pandas as pd
 from typing import Optional
-from config import MAX_UNDO_HISTORY
+from .config import MAX_UNDO_HISTORY
 
 
 class Session:
@@ -38,8 +38,16 @@ class Session:
             name: Name to assign to the table
             df: DataFrame to store
         """
+        if name in self.tables:
+            # Preserve existing history when replacing table content
+            if name not in self.history:
+                self.history[name] = []
+            else:
+                self.history[name].append(self.tables[name].copy())
+        else:
+            self.history[name] = []
+
         self.tables[name] = df
-        self.history[name] = []
         self.active = name
     
     def push_undo(self, name: Optional[str] = None) -> None:
@@ -84,6 +92,8 @@ class Session:
         """
         if not self.tables:
             raise RuntimeError("No tables loaded in session")
+        if self.active not in self.tables:
+            raise RuntimeError("Active table not found in session")
         return self.tables[self.active]
     
     @df.setter
@@ -99,6 +109,8 @@ class Session:
         """
         if not self.tables:
             raise RuntimeError("No tables loaded in session")
+        if self.active not in self.tables:
+            raise RuntimeError("Active table not found in session")
         self.tables[self.active] = value
     
     def list_tables(self) -> list[str]:
