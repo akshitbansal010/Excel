@@ -63,7 +63,7 @@ def op_table_manager(sess: Session):
             for i, n in enumerate(tbls): console.print(f"  [yellow]{i+1}[/yellow]  {n}")
             c = Prompt.ask("Pick table")
             try:    tname = tbls[int(c)-1]
-            except: tname = c
+            except (ValueError, IndexError): tname = c
             try:
                 new_df = db_load(sess.db_path, tname)
                 new_df.columns = [col.strip() for col in new_df.columns]

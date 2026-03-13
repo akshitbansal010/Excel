@@ -44,6 +44,9 @@ class Session:
                 self.history[name] = []
             else:
                 self.history[name].append(self.tables[name].copy())
+                # Enforce MAX_UNDO_HISTORY cap
+                if len(self.history[name]) > MAX_UNDO_HISTORY:
+                    self.history[name].pop(0)
         else:
             self.history[name] = []
 
@@ -75,8 +78,11 @@ class Session:
         """
         n = name or self.active
         if self.history.get(n):
-            self.tables[n] = self.history[n].pop()
-            return True
+            # Use indexing to preserve history for potential redo operations
+            if len(self.history[n]) > 0:
+                self.tables[n] = self.history[n][-1].copy()
+                self.history[n].pop()
+                return True
         return False
     
     @property

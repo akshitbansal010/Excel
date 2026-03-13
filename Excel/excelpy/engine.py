@@ -388,7 +388,7 @@ def read_csv(path: str, force_engine: Optional[str] = None, **kwargs) -> DataFra
                 if sep in first_line:
                     kwargs["sep"] = sep
                     break
-        except:
+        except (IOError, OSError, UnicodeDecodeError):
             pass
     
     if engine == "polars":

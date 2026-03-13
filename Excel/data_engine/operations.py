@@ -66,6 +66,8 @@ from data_engine.operations.smart_fix import (
     op_smart_fix,
 )
 
+from data_engine.operations.ranking import op_rank
+
 __all__ = [
     # Smart Fix
     "scan_column_issues", "show_load_report", "op_smart_fix",
@@ -88,4 +90,6 @@ __all__ = [
     "detect_column_type", "op_profile", "op_outlier_detection",
     "op_correlation_matrix", "op_crosstab", "op_segment_column",
     "op_time_series", "op_string_analysis",
+    # Ranking
+    "op_rank",
 ]

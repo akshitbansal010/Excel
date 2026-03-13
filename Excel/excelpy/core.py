@@ -38,6 +38,14 @@ from excelpy.helpers import (
 console = Console()
 
 
+def _show_operation_summary(result: 'OperationResult') -> None:
+    """Display summary of operation result."""
+    console.print(f"\n[green]✓ {result.operation.title()} complete[/green]")
+    console.print(f"[dim]  Rows: {format_number(result.rows_before)} → {format_number(result.rows_after)}  "
+                  f"| Columns: {result.cols_before} → {result.cols_after}[/dim]")
+    console.print(f"[dim]  Time: {result.time_taken:.2f}s[/dim]")
+
+
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  RESULT TRACKING                                                  ║
 # ╚══════════════════════════════════════════════════════════════════╝
@@ -83,7 +91,9 @@ def load_table(
         table_name = kwargs.pop('table_name', None)
         if not table_name:
             console.print("[yellow]Please specify table_name for SQLite database.[/yellow]")
-            table_name = Prompt.ask("Table name")
+            table_name = Prompt.ask("Table name").strip()
+            if not table_name:
+                raise ValueError("Table name cannot be empty")
         df = read_sqlite(path, table_name, force_engine)
     else:
         # CSV file
@@ -715,6 +725,7 @@ def _apply_rank_polars(
 ) -> DataFrameWrapper:
     """Apply ranking using polars."""
     native = df.native
+    import polars as pl
     
     # Build ranking expression. Use scalar struct based ranking to preserve tie semantics and avoid numeric-only assumptions.
     from polars import col as pl_col
@@ -748,6 +759,7 @@ def _apply_rank_pandas(
     top_n: Optional[int]
 ) -> DataFrameWrapper:
     """Apply ranking using pandas."""
+    import pandas as pd
     native = df.native.copy()
     
     # Map tie method

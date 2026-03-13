@@ -165,7 +165,7 @@ def ask_cols_numbered(prompt_text: str, df: pd.DataFrame, allow_all: bool = True
                 for i in range(start, min(end+1, len(df.columns)+1)):
                     if 1 <= i <= len(df.columns):
                         cols.append(df.columns[i-1])
-            except:
+            except (ValueError, IndexError):
                 pass
         else:
             # Single number
@@ -173,7 +173,7 @@ def ask_cols_numbered(prompt_text: str, df: pd.DataFrame, allow_all: bool = True
                 i = int(part)
                 if 1 <= i <= len(df.columns):
                     cols.append(df.columns[i-1])
-            except:
+            except (ValueError, IndexError):
                 # Try as column name
                 resolved = resolve(part, df)
                 if resolved:
@@ -295,7 +295,7 @@ def fuzzy_pick_value(raw: str, df: pd.DataFrame, col: str,
         return raw
     try:
         return good[int(pick)-1][0]
-    except:
+    except (ValueError, IndexError):
         return raw
 
 

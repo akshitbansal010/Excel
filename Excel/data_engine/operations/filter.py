@@ -11,7 +11,7 @@ from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
 
 from ..display import show_columns, show_preview, show_unique_inline
-from ..helpers import fuzzy_pick_value, fuzzy_pick_values_list, resolve, ask_cols
+from ..helpers import col_letter, fuzzy_pick_value, fuzzy_pick_values_list, resolve, ask_cols
 from ..session import Session
 
 console = Console()
@@ -35,7 +35,7 @@ def _show_filter_help():
         "\n[dim]Examples:[/dim]\n"
         "  [dim]Price == 100[/dim]\n"
         "  [dim]Name CONTAINS 'John'[/dim]\n"
-        "  [dim]Status IS ONE OF Active,Pending",
+        "  [dim]Status IS ONE OF Active,Pending[/dim]",
         title="📊 Filter Options", border_style="cyan", padding=(0, 1)
     ))
 
@@ -53,7 +53,8 @@ def apply_single_condition(df: pd.DataFrame, col: str, op: str, val) -> pd.Serie
         try:
             num_list = [float(v) for v in raw_list]
             mask = df[col].isin(num_list)
-        except:
+        except (ValueError, TypeError):
+            # Try string comparison if numeric fails
             mask = df[col].astype(str).str.strip().isin(raw_list)
         return mask if op in ("IN", "IS ONE OF") else ~mask
     
@@ -72,7 +73,20 @@ def apply_single_condition(df: pd.DataFrame, col: str, op: str, val) -> pd.Serie
     # Standard comparison operators
     try:
         num_val = float(val)
-        return pd.Series(False, index=df.index).where(False, (df[col] > num_val) if op == ">" else (df[col] < num_val) if op == "<" else (df[col] >= num_val) if op == ">=" else (df[col] <= num_val) if op == "<=" else (df[col] == num_val) if op == "==" else (df[col] != num_val))
+        if op == ">":
+            return df[col] > num_val
+        elif op == "<":
+            return df[col] < num_val
+        elif op == ">=":
+            return df[col] >= num_val
+        elif op == "<=":
+            return df[col] <= num_val
+        elif op == "==":
+            return df[col] == num_val
+        elif op == "!=":
+            return df[col] != num_val
+        else:
+            return pd.Series(False, index=df.index)
     except ValueError:
         # String comparison
         col_series = df[col].astype(str)
@@ -209,15 +223,6 @@ def op_filter(sess: Session) -> pd.DataFrame:
     except Exception as e:
         console.print(f"[red]❌ Filter error: {e}[/red]")
         return df
-
-
-def col_letter(idx: int) -> str:
-    """Convert column index to Excel-style letter (0 -> A, 1 -> B, 26 -> AA)."""
-    result, idx = "", idx + 1
-    while idx > 0:
-        idx, r = divmod(idx - 1, 26)
-        result = chr(65 + r) + result
-    return result
 
 
 def op_multi_filter(sess: Session) -> pd.DataFrame:

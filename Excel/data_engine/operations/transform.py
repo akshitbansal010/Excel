@@ -98,8 +98,12 @@ def op_add_column(sess: Session) -> pd.DataFrame:
                 if v is None:
                     return np.nan
                 v = str(v).strip()
-                if v.startswith("`") and v.endswith("`") and v[1:-1] in df.columns:
-                    return df[v[1:-1]]
+                # Check backtick-wrapped column reference
+                if v.startswith("`") and v.endswith("`") and len(v) > 2:
+                    col_name = v[1:-1]
+                    if col_name in df.columns:
+                        return df[col_name]
+                # Try numeric conversion
                 try:
                     return float(v)
                 except (ValueError, TypeError):
@@ -136,16 +140,24 @@ def op_add_column(sess: Session) -> pd.DataFrame:
                 else:
                     console.print("[yellow]Add at least one mapping.[/yellow]")
                     continue
-            from_v = fuzzy_pick_value(from_v, df, src_col) or from_v
+            # fuzzy_pick_value may return None; use fallback
+            fuzzy_result = fuzzy_pick_value(from_v, df, src_col)
+            from_v = fuzzy_result if fuzzy_result is not None else from_v
             from_key = str(from_v)
             to_v = Prompt.ask(f"  → To (replace '{from_v}' with)", default="").strip()
             mappings[from_key] = to_v
             console.print(f"     [green]✓[/green] {from_v} → {to_v}")
 
         default = Prompt.ask("\nDefault value for unmapped (press Enter for blank)", default="").strip()
-        df[new_col] = df[src_col].astype(str).map(lambda v: mappings.get(str(v), np.nan))
-        if default:
-            df[new_col] = df[new_col].fillna(default)
+        # Map values while preserving types when possible
+        df[new_col] = df[src_col].astype(str).map(
+            lambda v: mappings.get(str(v).strip(), default if default else np.nan)
+        )
+        # Try to convert to numeric if all values look numeric
+        try:
+            df[new_col] = pd.to_numeric(df[new_col], errors="ignore")
+        except Exception:
+            pass  # Keep as-is if conversion fails
         
         mapped_count = df[new_col].notna().sum()
         console.print(f"[green]✔ '{new_col}' — {mapped_count:,} values mapped.[/green]")
@@ -414,7 +426,7 @@ def op_handle_nulls(sess: Session) -> pd.DataFrame:
         try:
             try:
                 val = float(val)
-            except:
+            except ValueError:
                 pass
             for c in cols: 
                 df[c] = df[c].fillna(val)
@@ -672,7 +684,7 @@ def op_join(sess: Session):
     try:
         t1_name = tables[int(t1_idx)-1]
         t2_name = tables[int(t2_idx)-1]
-    except:
+    except (ValueError, IndexError):
         console.print("[red]Invalid selection.[/red]"); return
     
     t1 = sess.tables[t1_name]

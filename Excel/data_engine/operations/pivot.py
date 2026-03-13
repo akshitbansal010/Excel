@@ -19,10 +19,14 @@ def op_pivot_table(sess: Session):
     console.print(Rule("[bold]📊 Pivot Table[/bold]"))
     
     rows_in = Prompt.ask("Rows (group by columns, comma-sep)").strip()
-    if not rows_in: return
+    if not rows_in: 
+        console.print("[yellow]No rows specified. Cancelling pivot.[/yellow]")
+        return
     index = [resolve(c.strip(), df) for c in rows_in.split(",") if c.strip()]
     index = [c for c in index if c]
-    if not index: return
+    if not index: 
+        console.print("[yellow]No valid row columns found.[/yellow]")
+        return
 
     cols_in = Prompt.ask("Columns (optional, comma-sep)", default="").strip()
     columns = [resolve(c.strip(), df) for c in cols_in.split(",") if c.strip()]
@@ -30,7 +34,9 @@ def op_pivot_table(sess: Session):
 
     val_in = Prompt.ask("Values (column to aggregate)").strip()
     values = resolve(val_in, df)
-    if not values: return
+    if not values: 
+        console.print("[yellow]No valid value column found.[/yellow]")
+        return
 
     agg_map = {"1":"sum", "2":"mean", "3":"count", "4":"min", "5":"max", "6":"nunique"}
     agg_c = Prompt.ask("Function: [1]sum [2]mean [3]count [4]min [5]max [6]unique", choices=list(agg_map.keys()), default="1")

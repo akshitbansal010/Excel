@@ -3,6 +3,7 @@ Find & Replace module — classic Ctrl+H functionality.
 Improved with Excel-like guided experience.
 """
 
+import re
 import pandas as pd
 
 from rich import box
@@ -120,19 +121,37 @@ def op_find_replace(sess: Session) -> pd.DataFrame:
         t.add_column("Current", style="red", min_width=20)
         t.add_column("Will become", style="green", min_width=20)
         for idx, row in preview_rows.iterrows():
-            t.add_row(str(idx+1), str(row[col])[:30], replace_str)
+            current_value = str(row[col])[:30]
+            # Compute the actual replacement based on mode
+            if match_mode == "R":
+                new_value = re.sub(find_str, replace_str, str(row[col]))
+            elif match_mode == "C":
+                new_value = str(row[col]).replace(find_str, replace_str)
+            else:  # Exact (E)
+                new_value = replace_str
+            new_value_display = str(new_value)[:30]
+            t.add_row(str(idx+1), current_value, new_value_display)
     else:
         t.add_column("Row", style="dim", width=5)
         t.add_column("Changes", style="white", min_width=40)
         for idx in preview_rows.index:
             changed_cols = [c for c in df.columns if mask.loc[idx, c]]
-            change_str = ", ".join([f"{c}: {str(df.loc[idx, c])[:15]}→{replace_str[:15]}" 
-                                   for c in changed_cols[:3]])
+            changes = []
+            for c in changed_cols[:3]:
+                cell_val = str(df.loc[idx, c])
+                if match_mode == "R":
+                    new_val = re.sub(find_str, replace_str, cell_val)
+                elif match_mode == "C":
+                    new_val = cell_val.replace(find_str, replace_str)
+                else:  # Exact (E)
+                    new_val = replace_str
+                changes.append(f"{c}: {cell_val[:15]}→{new_val[:15]}")
+            change_str = ", ".join(changes)
             t.add_row(str(idx+1), change_str)
     console.print(t)
     
     # Step 7: Replace mode
-    console.print("\n[bold]Step 5: Replace options[/bold]")
+    console.print("\n[bold]Step 7: Replace options[/bold]")
     console.print("  [yellow]P[/yellow]  Preview first (recommended)")
     console.print("  [yellow]A[/yellow]  Replace all")
     console.print("  [yellow]F[/yellow]  Replace first only")
@@ -152,21 +171,56 @@ def op_find_replace(sess: Session) -> pd.DataFrame:
         # Replace first only
         if col:
             first_match_idx = mask[mask[col]].index[0]
-            df.at[first_match_idx, col] = replace_str
+            current_val = str(df.at[first_match_idx, col])
+            if match_mode == "R":
+                new_val = re.sub(find_str, replace_str, current_val, count=1)
+            elif match_mode == "C":
+                new_val = current_val.replace(find_str, replace_str, 1)
+            else:  # Exact (E)
+                new_val = replace_str
+            df.at[first_match_idx, col] = new_val
         else:
             first_match_idx = mask.any(axis=1).idxmax()
             for c in df.columns:
                 if mask.loc[first_match_idx, c]:
-                    df.at[first_match_idx, c] = replace_str
+                    current_val = str(df.at[first_match_idx, c])
+                    if match_mode == "R":
+                        new_val = re.sub(find_str, replace_str, current_val, count=1)
+                    elif match_mode == "C":
+                        new_val = current_val.replace(find_str, replace_str, 1)
+                    else:  # Exact (E)
+                        new_val = replace_str
+                    df.at[first_match_idx, c] = new_val
                     break
         console.print(f"[green]✔ Replaced 1 cell with '{replace_str}'.[/green]")
     else:
         # Replace all
         if col:
-            df.loc[mask[col], col] = replace_str
+            if match_mode == "R":
+                df.loc[mask[col], col] = df.loc[mask[col], col].astype(str).str.replace(
+                    find_str, replace_str, regex=True, 
+                    flags=re.IGNORECASE if not case_sensitive else 0
+                )
+            elif match_mode == "C":
+                df.loc[mask[col], col] = df.loc[mask[col], col].astype(str).str.replace(
+                    find_str, replace_str, regex=False, case=case_sensitive
+                )
+            else:  # Exact (E)
+                df.loc[mask[col], col] = replace_str
         else:
             for c in df.columns:
-                df.loc[mask[c], c] = replace_str
+                if mask[c].any():
+                    if match_mode == "R":
+                        df.loc[mask[c], c] = df.loc[mask[c], c].astype(str).str.replace(
+                            find_str, replace_str, regex=True,
+                            flags=re.IGNORECASE if not case_sensitive else 0
+                        )
+                    elif match_mode == "C":
+                        df.loc[mask[c], c] = df.loc[mask[c], c].astype(str).str.replace(
+                            find_str, replace_str, regex=False, case=case_sensitive
+                        )
+                    else:  # Exact (E)
+                        df.loc[mask[c], c] = replace_str
         console.print(f"[green]✔ Replaced {match_count:,} cells with '{replace_str}'.[/green]")
     
     show_preview(df, n=5, title="After Replace")

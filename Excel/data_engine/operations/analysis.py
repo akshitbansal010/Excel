@@ -37,16 +37,17 @@ def detect_column_type(df: pd.DataFrame, col: str) -> str:
         return "ID (Unique)"
     
     # Check for date
-    if df[col].dtype == 'datetime64':
+    if pd.api.types.is_datetime64_any_dtype(df[col]):
         return "Date"
     if df[col].dtype == 'object':
         sample = df[col].dropna().head(10)
-        try:
-            parsed = pd.to_datetime(sample, errors='coerce')
-            if len(sample) > 0 and parsed.notna().sum() / len(sample) > 0.7:
-                return "Date-like string"
-        except Exception:
-            pass
+        if len(sample) > 0:  # Only check if sample has data
+            try:
+                parsed = pd.to_datetime(sample, errors='coerce')
+                if parsed.notna().sum() / len(sample) > 0.7:
+                    return "Date-like string"
+            except Exception:
+                pass
     
     # Check for email pattern
     if df[col].dtype == 'object':
@@ -85,7 +86,7 @@ def op_profile(sess: Session):
     console.print(f"[bold cyan]Columns:[/bold cyan] {len(df.columns)}")
     
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    date_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
+    date_cols = [col for col in df.columns if pd.api.types.is_datetime64_any_dtype(df[col])]
     obj_cols = df.select_dtypes(include=['object']).columns.tolist()
     
     console.print(f"\n[dim]Numeric: {len(numeric_cols)} | Date: {len(date_cols)} | Text: {len(obj_cols)}[/dim]")
@@ -128,7 +129,7 @@ def op_profile(sess: Session):
                 outliers = col_data[abs(col_data - mean_val) > 3 * std_val]
                 if len(outliers) > 0:
                     console.print(f"  [yellow]⚠ Outliers (3σ): {len(outliers)}[/yellow]")
-            except:
+            except (ValueError, TypeError):
                 pass
         
         # Date-specific
@@ -138,7 +139,7 @@ def op_profile(sess: Session):
                 min_dt = dt_col.min()
                 max_dt = dt_col.max()
                 console.print(f"  Date range: {min_dt} to {max_dt}")
-            except:
+            except (ValueError, TypeError, pd.errors.ParserError):
                 pass
     
     # Option to export
@@ -148,7 +149,7 @@ def op_profile(sess: Session):
             profile_data = []
             for col in df.columns:
                 denom = len(df)
-            row = {
+                row = {
                     "Column": col,
                     "Type": str(df[col].dtype),
                     "Null Count": df[col].isna().sum(),
@@ -164,7 +165,7 @@ def op_profile(sess: Session):
                         row["Std Dev"] = col_data.std()
                         row["Min"] = col_data.min()
                         row["Max"] = col_data.max()
-                    except:
+                    except (ValueError, TypeError):
                         pass
                 profile_data.append(row)
             
@@ -412,16 +413,17 @@ def op_time_series(sess: Session) -> pd.DataFrame:
     console.print(Rule("[bold]Time Series Analysis[/bold]"))
     
     # Find date columns
-    date_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
+    date_cols = [col for col in df.columns if pd.api.types.is_datetime64_any_dtype(df[col])]
     
     # Also check for date-like strings
     for col in df.select_dtypes(include=['object']).columns:
         try:
             sample = df[col].dropna().head(20)
-            parsed = pd.to_datetime(sample, errors='coerce')
-            if parsed.notna().sum() / len(sample) > 0.7:
-                date_cols.append(col)
-        except:
+            if len(sample) > 0:  # Guard against empty sample
+                parsed = pd.to_datetime(sample, errors='coerce')
+                if parsed.notna().sum() / len(sample) > 0.7:
+                    date_cols.append(col)
+        except (ValueError, TypeError):
             pass
     
     if not date_cols:
@@ -435,7 +437,7 @@ def op_time_series(sess: Session) -> pd.DataFrame:
     date_col = date_cols[int(choice)-1]
     
     # Convert if string
-    if df[date_col].dtype != 'datetime64':
+    if not pd.api.types.is_datetime64_any_dtype(df[date_col]):
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
     
     console.print("\n[bold]Time Operations:[/bold]")
@@ -528,7 +530,7 @@ def op_time_series(sess: Session) -> pd.DataFrame:
             date2_col = resolve(date2_in, df)
             if not date2_col:
                 console.print("[red]Column not found.[/red]"); return df
-            if df[date2_col].dtype != 'datetime64':
+            if not pd.api.types.is_datetime64_any_dtype(df[date2_col]):
                 df[date2_col] = pd.to_datetime(df[date2_col], errors='coerce')
         
         new_col = Prompt.ask("Name for days-difference column")

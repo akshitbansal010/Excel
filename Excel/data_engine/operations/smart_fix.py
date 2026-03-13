@@ -196,4 +196,7 @@ def op_smart_fix(sess: Session) -> pd.DataFrame:
     
     console.print(f"[green]✔ Smart fix complete.[/green]")
     show_preview(df, n=5, title="After Fix")
+    
+    # Persist changes back to session so callers see the updates
+    sess.df = df
     return df

@@ -66,9 +66,16 @@ def op_export(sess: Session):
 
     df_out = sess.tables[tname]
     ts     = datetime.now().strftime("%Y%m%d_%H%M")
-    fmt    = Prompt.ask("Format [C]SV / [X]LSX", default="C").upper()
-    ext    = "csv" if fmt=="C" else "xlsx"
-    path   = Prompt.ask("File path", default=f"{tname}_{ts}.{ext}")
+    
+    # Validate format choice with re-prompting on invalid input
+    while True:
+        fmt = Prompt.ask("Format [C]SV / [X]LSX", default="C").strip().upper()
+        if fmt in ("C", "X"):
+            break
+        console.print("[yellow]⚠ Please enter 'C' for CSV or 'X' for Excel.[/yellow]")
+    
+    ext = "csv" if fmt == "C" else "xlsx"
+    path = Prompt.ask("File path", default=f"{tname}_{ts}.{ext}")
 
     try:
         if fmt == "C":

@@ -78,7 +78,8 @@ def check_large_file(path: str, force: bool = False) -> bool:
             console.print(f"[yellow]⚠ Large file detected: {size_mb:.1f} MB[/yellow]")
             console.print("[dim]Use --force to run full operation without preview mode[/dim]")
             return False
-    except:
+    except OSError:
+        # File access error; let caller handle
         pass
     return True
 
@@ -98,7 +99,7 @@ def load(
         excelpy load data.csv --engine pandas
         excelpy load database.sqlite --table my_table
     """
-    global current_df, current_df
+    global current_df, current_path
     
     # Check if file exists
     if not os.path.exists(path):

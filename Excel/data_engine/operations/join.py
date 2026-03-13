@@ -22,9 +22,26 @@ def op_join_tables(sess: Session):
 
     for i, t in enumerate(tables):
         console.print(f"  {i+1}. {t}")
-        
-    t1 = tables[int(Prompt.ask("Left table #", default="1"))-1]
-    t2 = tables[int(Prompt.ask("Right table #", default="2"))-1]
+    
+    while True:
+        try:
+            choice1 = int(Prompt.ask("Left table #", default="1"))
+            if 1 <= choice1 <= len(tables):
+                t1 = tables[choice1 - 1]
+                break
+            console.print(f"[red]Please enter a number between 1 and {len(tables)}[/red]")
+        except ValueError:
+            console.print("[red]Please enter a valid number[/red]")
+    
+    while True:
+        try:
+            choice2 = int(Prompt.ask("Right table #", default="2"))
+            if 1 <= choice2 <= len(tables):
+                t2 = tables[choice2 - 1]
+                break
+            console.print(f"[red]Please enter a number between 1 and {len(tables)}[/red]")
+        except ValueError:
+            console.print("[red]Please enter a valid number[/red]")
     
     df1 = sess.tables[t1]
     df2 = sess.tables[t2]
