@@ -139,6 +139,12 @@ def startup(cli_db: str = None) -> Session:
 
     show_columns(sess.df)
     show_preview(sess.df, n=5, title=f"▸ {sess.active}")
+    
+    # Auto-show load report on first load (1.1 Smart Load & Type Detection)
+    console.print("\n[dim]Running automatic column scan...[/dim]")
+    issues = ops.scan_column_issues(sess.df)
+    ops.show_load_report(sess.df, issues)
+    
     return sess
 
 
@@ -193,6 +199,15 @@ def main():
             elif choice == "8": ops.op_pivot(sess)
             elif choice == "9": sess.push_undo(); sess.df = ops.op_change_type(sess)
             elif choice == "J": sess.push_undo(); ops.op_join(sess)
+
+            # PHASE 1 - EXCEL PARITY FEATURES
+            elif choice == "F": sess.push_undo(); sess.df = ops.op_smart_fix(sess)   # 1.1 Smart Load
+            elif choice == "M": sess.push_undo(); sess.df = ops.op_multi_filter(sess)  # 1.2 Multi-filter
+            elif choice == "G": sess.push_undo(); sess.df = ops.op_find_replace(sess)  # 1.3 Find & Replace
+            elif choice == "O": ops.op_focus_view(sess)   # 1.4 Focus View
+            elif choice == "L": sess.push_undo(); sess.df = ops.op_edit_row(sess)   # 1.5 Row Edit
+            elif choice == "B": sess.push_undo(); sess.df = ops.op_calculated_columns(sess)  # 1.6 Calc Columns
+            elif choice == "Y": sess.push_undo(); sess.df = ops.op_filter_by_color(sess)  # Filter by Flag
 
             # TABLE MANAGER
             elif choice == "T": ops.op_table_manager(sess)

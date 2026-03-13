@@ -33,6 +33,839 @@ from session import Session
 console = Console()
 
 
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  SMART LOAD & TYPE DETECTION (1.1)                                ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+def scan_column_issues(df: pd.DataFrame) -> dict:
+    """
+    Scan all columns and identify type issues.
+    Returns a dict with issue categories and affected columns.
+    """
+    issues = {
+        "date_like_strings": [],    # Looks like dates but stored as strings
+        "float_id_precision": [],    # Large integers stored as float (precision loss)
+        "high_nulls": [],            # 90%+ null values
+        "unique_values": [],         # All values unique (likely ID)
+        "mixed_types": [],           # Column has mixed data types
+    }
+    
+    for col in df.columns:
+        # Check for high nulls (90%+)
+        null_pct = df[col].isna().sum() / len(df) if len(df) > 0 else 0
+        if null_pct >= 0.9:
+            issues["high_nulls"].append(col)
+        
+        # Check for unique values (likely ID column)
+        unique_count = df[col].nunique(dropna=False)
+        if unique_count == len(df) and len(df) > 10:
+            issues["unique_values"].append(col)
+        
+        # Check for float precision issues with large integers
+        if df[col].dtype == 'float64' or df[col].dtype == 'float32':
+            non_null = df[col].dropna()
+            if len(non_null) > 0:
+                # Check if values look like integers (within 0.1 of integer)
+                int_like = non_null.apply(lambda x: abs(x - round(x)) < 0.1 if pd.notna(x) else False)
+                if int_like.all():
+                    # Check for large numbers that might have precision loss
+                    large_nums = non_null[abs(non_null) >= 1e15]
+                    if len(large_nums) > 0:
+                        issues["float_id_precision"].append(col)
+        
+        # Check for date-like strings
+        if df[col].dtype == 'object':
+            sample = df[col].dropna().head(20).astype(str)
+            if len(sample) > 0:
+                # Try parsing as dates
+                try:
+                    parsed = pd.to_datetime(sample, errors='coerce')
+                    success_rate = parsed.notna().sum() / len(sample)
+                    if success_rate >= 0.7:
+                        issues["date_like_strings"].append(col)
+                except:
+                    pass
+        
+        # Check for mixed types in same column
+        if df[col].dtype == 'object':
+            type_sample = df[col].dropna().head(100)
+            has_int = type_sample.apply(lambda x: str(x).isdigit() if pd.notna(x) else False).any()
+            has_float = type_sample.apply(lambda x: '.' in str(x) and str(x).replace('.','',1).isdigit() if pd.notna(x) else False).any()
+            has_text = type_sample.apply(lambda x: any(c.isalpha() for c in str(x)) if pd.notna(x) else False).any()
+            if sum([has_int, has_float, has_text]) >= 2:
+                issues["mixed_types"].append(col)
+    
+    return issues
+
+
+def show_load_report(df: pd.DataFrame, issues: dict) -> None:
+    """Display a load report showing identified issues."""
+    t = Table(title="📋  Load Report — Column Issues Detected", 
+              box=box.ROUNDED, title_style="bold cyan")
+    t.add_column("Issue Type", style="yellow", width=25)
+    t.add_column("Affected Columns", style="white", min_width=30)
+    t.add_column("Count", style="magenta", width=8, justify="right")
+    
+    issue_labels = {
+        "date_like_strings": "Date-like strings",
+        "float_id_precision": "Float ID (precision risk)",
+        "high_nulls": "High nulls (90%+)",
+        "unique_values": "Unique values (likely ID)",
+        "mixed_types": "Mixed types",
+    }
+    
+    total_issues = 0
+    for issue_type, cols in issues.items():
+        if cols:
+            label = issue_labels.get(issue_type, issue_type)
+            col_str = ", ".join(cols[:5])
+            if len(cols) > 5:
+                col_str += f" … +{len(cols)-5} more"
+            t.add_row(label, col_str, str(len(cols)))
+            total_issues += len(cols)
+    
+    if total_issues == 0:
+        console.print(Panel("[green]✔ No issues detected. Your data looks clean![/green]",
+                          title="Load Report", border_style="green"))
+    else:
+        console.print(Panel(f"[yellow]⚠ Found {total_issues} potential issues across {sum(1 for v in issues.values() if v)} columns.[/yellow]\n\n"
+                          "Use 'F' to run the Smart Fix wizard.",
+                          title="Load Report", border_style="yellow"))
+        console.print(t)
+
+
+def op_smart_fix(sess: Session) -> pd.DataFrame:
+    """Smart Load Fix - scan and fix identified column issues."""
+    df = sess.df
+    console.print(Rule("[bold]Smart Load Fix Wizard[/bold]"))
+    
+    issues = scan_column_issues(df)
+    show_load_report(df, issues)
+    
+    # If no issues, exit
+    if not any(issues.values()):
+        return df
+    
+    console.print("\n[dim]Select an issue to fix, or 0 to exit.[/dim]")
+    
+    options = []
+    for issue_type, cols in issues.items():
+        if cols:
+            options.append((issue_type, cols))
+    
+    if not options:
+        return df
+    
+    for i, (issue_type, cols) in enumerate(options):
+        label = {
+            "date_like_strings": "1. Convert date-like strings to actual dates",
+            "float_id_precision": "2. Convert float IDs to integers (avoid precision loss)",
+            "high_nulls": "3. Drop columns with 90%+ nulls",
+            "unique_values": "4. Mark columns as likely IDs (for your reference)",
+            "mixed_types": "5. Standardize mixed-type columns",
+        }.get(issue_type, f"{i+1}. {issue_type}")
+        console.print(f"  {label}")
+        console.print(f"     [dim]Affected: {', '.join(cols[:3])}{' ...' if len(cols) > 3 else ''}[/dim]")
+    
+    choice = Prompt.ask("Fix which issue?", choices=["0"] + [str(i+1) for i in range(len(options))])
+    
+    if choice == "0":
+        return df
+    
+    issue_type, cols = options[int(choice)-1]
+    
+    if issue_type == "date_like_strings":
+        console.print(f"[cyan]Converting {len(cols)} columns to dates...[/cyan]")
+        for col in cols:
+            fmt = Prompt.ask(f"  Date format for '{col}' (blank=auto)", default="").strip()
+            if fmt:
+                df[col] = pd.to_datetime(df[col], format=fmt, errors='coerce')
+            else:
+                df[col] = pd.to_datetime(df[col], infer_datetime_format=True, errors='coerce')
+            console.print(f"    [green]✔[/green] {col}")
+    
+    elif issue_type == "float_id_precision":
+        console.print(f"[cyan]Converting {len(cols)} columns to integers...[/cyan]")
+        for col in cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce').astype('Int64')
+            console.print(f"    [green]✔[/green] {col}")
+    
+    elif issue_type == "high_nulls":
+        console.print(f"[cyan]Dropping {len(cols)} columns with 90%+ nulls...[/cyan]")
+        if Confirm.ask(f"Drop {len(cols)} columns?", default=True):
+            df = df.drop(columns=cols)
+            console.print(f"[green]✔ Dropped: {', '.join(cols)}[/green]")
+    
+    elif issue_type == "unique_values":
+        console.print("[cyan]Adding _is_id flag columns...[/cyan]")
+        for col in cols:
+            df[f"{col}_is_id"] = True
+            console.print(f"    [green]✔[/green] Created {col}_is_id flag")
+    
+    elif issue_type == "mixed_types":
+        console.print(f"[cyan]Cleaning {len(cols)} mixed-type columns...[/cyan]")
+        for col in cols:
+            # Try to convert to most specific type
+            df[col] = pd.to_numeric(df[col], errors='ignore')
+            if df[col].dtype == 'object':
+                df[col] = df[col].astype(str).str.strip()
+            console.print(f"    [green]✔[/green] {col}")
+    
+    console.print(f"[green]✔ Smart fix complete.[/green]")
+    show_preview(df, n=5, title="After Fix")
+    return df
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  MULTI-CONDITION FILTER (1.2)                                      ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+def apply_single_condition(df: pd.DataFrame, col: str, op: str, val) -> pd.Series:
+    """Apply a single filter condition and return boolean mask."""
+    if op in ("IS NULL", "ISNULL", "NULL"):
+        return df[col].isna() | (df[col].astype(str).str.strip() == "")
+    
+    if op in ("IS NOT NULL", "ISNOTNULL", "NOT NULL"):
+        return df[col].notna() & (df[col].astype(str).str.strip() != "")
+    
+    if op in ("IN", "NOT IN"):
+        raw_list = [v.strip().strip("'\"") for v in str(val).split(",")]
+        try:
+            num_list = [float(v) for v in raw_list]
+            mask = df[col].isin(num_list)
+        except:
+            mask = df[col].astype(str).str.strip().isin(raw_list)
+        return mask if op == "IN" else ~mask
+    
+    if op in ("CONTAINS", "~"):
+        return df[col].astype(str).str.contains(val, case=False, na=False)
+    
+    if op == "NOT CONTAINS":
+        return ~df[col].astype(str).str.contains(val, case=False, na=False)
+    
+    if op == "STARTSWITH":
+        return df[col].astype(str).str.startswith(val, na=False)
+    
+    if op == "ENDSWITH":
+        return df[col].astype(str).str.endswith(val, na=False)
+    
+    # Standard comparison operators
+    try:
+        num_val = float(val)
+        return df.query(f"`{col}` {op} {num_val}").index.isin(df.index)
+    except ValueError:
+        return df.query(f"`{col}` {op} '{val}'").index.isin(df.index)
+
+
+def op_multi_filter(sess: Session) -> pd.DataFrame:
+    """
+    Multi-condition filter - stack multiple conditions and apply together.
+    Similar to Excel AutoFilter with AND/OR logic.
+    """
+    df = sess.df
+    console.print(Rule("[bold]Multi-Condition Filter[/bold]"))
+    
+    conditions = []  # List of (column, operator, value, logic_type)
+    
+    while True:
+        # Show current conditions as chips
+        if conditions:
+            console.print("\n[bold]Current Filter Chips:[/bold]")
+            for i, (col, op, val, logic) in enumerate(conditions):
+                chip = f"[cyan]{col}[/cyan] [yellow]{op}[/yellow] [white]{val}[/white]"
+                if logic == "AND":
+                    chip += " [green]AND[/green]"
+                elif logic == "OR":
+                    chip += " [magenta]OR[/magenta]"
+                console.print(f"  {i+1}. {chip}  [dim](R=remove)[/dim]")
+        else:
+            console.print("\n[dim]No conditions added yet.[/dim]")
+        
+        console.print("\n[dim]Options: [bold]A[/bold]dd condition   [bold]E[/bold]xecute   [bold]C[/bold]lear all   [bold]0[/bold] back[/dim]")
+        action = Prompt.ask("Action", choices=["A", "E", "C", "0", "a", "e", "c"]).upper()
+        
+        if action == "0":
+            return df
+        
+        if action == "C":
+            conditions.clear()
+            console.print("[dim]Conditions cleared.[/dim]")
+            continue
+        
+        if action == "E":
+            if not conditions:
+                console.print("[yellow]No conditions to apply.[/yellow]")
+                continue
+            # Execute all conditions
+            mask = pd.Series([True] * len(df), index=df.index)
+            
+            for i, (col, op, val, logic) in enumerate(conditions):
+                try:
+                    cond_mask = apply_single_condition(df, col, op, val)
+                    if i == 0:
+                        mask = cond_mask
+                    else:
+                        if logic == "AND":
+                            mask = mask & cond_mask
+                        else:  # OR
+                            mask = mask | cond_mask
+                except Exception as e:
+                    console.print(f"[red]Error applying condition {i+1}: {e}[/red]")
+                    continue
+            
+            result = df[mask]
+            removed = len(df) - len(result)
+            console.print(f"[green]✔ {len(result):,} rows kept ({removed} removed)[/green]")
+            show_preview(result, n=8, title="Filtered Result")
+            
+            if Confirm.ask("Apply this filter to working table?", default=True):
+                return result
+            return df
+        
+        if action == "A":
+            # Add a new condition
+            show_columns(df, compact=True)
+            col = resolve(Prompt.ask("Column"), df)
+            if not col:
+                console.print("[red]Column not found.[/red]"); continue
+            
+            show_unique_inline(df, col)
+            console.print("\n[dim]Operators: == != > < >= <= IN NOT IN CONTAINS IS NULL[/dim]")
+            op = Prompt.ask("Operator").strip().upper()
+            
+            if op in ("IS NULL", "ISNULL", "NULL"):
+                val = None
+            else:
+                val = Prompt.ask("Value (for IN use commas)").strip()
+            
+            # Determine AND/OR logic
+            if conditions:
+                logic = Prompt.ask("Combine with [A]ND or [O]R?", default="A").upper()
+            else:
+                logic = "AND"  # First condition doesn't need combinator
+            
+            conditions.append((col, op, val, logic))
+            console.print(f"[green]✔ Added: {col} {op} {val}[/green]")
+    
+    return df
+
+
+def op_filter_by_color(sess: Session) -> pd.DataFrame:
+    """Filter by flag column (like Excel's filter by color)."""
+    df = sess.df
+    console.print(Rule("[bold]Filter by Flag / Color[/bold]"))
+    
+    # Find columns that could be flags (0/1, True/False, Yes/No)
+    flag_cols = []
+    for col in df.columns:
+        if df[col].dtype == 'bool':
+            flag_cols.append(col)
+        elif df[col].dtype in ('int64', 'Int64', 'float64'):
+            unique = df[col].dropna().unique()
+            if set(unique).issubset({0, 1}):
+                flag_cols.append(col)
+        elif df[col].dtype == 'object':
+            unique = df[col].dropna().str.lower().unique()
+            if set(unique).issubset({'yes', 'no', 'y', 'n', 'true', 'false'}):
+                flag_cols.append(col)
+    
+    if not flag_cols:
+        console.print("[yellow]No flag columns found (0/1, Yes/No, True/False).[/yellow]")
+        return df
+    
+    console.print("[bold]Flag columns found:[/bold]")
+    for i, col in enumerate(flag_cols):
+        console.print(f"  [yellow]{i+1}[/yellow]  {col}")
+    
+    choice = Prompt.ask("Filter by which column?", 
+                        choices=[str(i+1) for i in range(len(flag_cols))])
+    col = flag_cols[int(choice)-1]
+    
+    # Determine values to keep
+    if df[col].dtype == 'bool':
+        console.print(f"[dim]Values: True / False[/dim]")
+        keep = Prompt.ask("Keep [T]rue or [F]alse?", default="T").upper()
+        result = df[df[col] == (keep == "T")]
+    elif df[col].dtype in ('int64', 'Int64', 'float64'):
+        console.print(f"[dim]Values: 0 / 1[/dim]")
+        keep = Prompt.ask("Keep [1] or [0]?", default="1").strip()
+        result = df[df[col] == int(keep)]
+    else:
+        console.print(f"[dim]Values: Yes/No or similar[/dim]")
+        keep = Prompt.ask("Keep [Y]es or [N]o?", default="Y").upper()
+        keep_val = 'yes' if keep == 'Y' else 'no'
+        result = df[df[col].str.lower() == keep_val]
+    
+    console.print(f"[green]✔ {len(result):,} rows kept (flag={keep})[/green]")
+    show_preview(result, n=5)
+    return result
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  FIND & REPLACE (1.3)                                              ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+def op_find_replace(sess: Session) -> pd.DataFrame:
+    """
+    Classic Ctrl+H Find & Replace functionality.
+    Supports exact match, contains, case sensitive, preview before commit.
+    """
+    df = sess.df
+    console.print(Rule("[bold]Find & Replace (Ctrl+H)[/bold]"))
+    
+    console.print("\n[bold]Scope:[/bold]")
+    console.print("  [yellow]1[/yellow]  One column")
+    console.print("  [yellow]2[/yellow]  All columns")
+    scope = Prompt.ask("Scope", choices=["1", "2"], default="1")
+    
+    if scope == "1":
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Column to search in"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+    else:
+        col = None
+    
+    find_str = Prompt.ask("Find what").strip()
+    replace_str = Prompt.ask("Replace with").strip()
+    
+    console.print("\n[dim]Match options: [bold]E[/bold]xact / [bold]C[/bold]ontains / [bold]R[/bold]egex[/dim]")
+    match_mode = Prompt.ask("Match mode", choices=["E", "C", "R"], default="E").upper()
+    
+    case_sensitive = Confirm.ask("Case sensitive?", default=False)
+    
+    console.print("\n[dim]Replace: [bold]F[/bold]irst only / [bold]A[/bold]ll / [bold]P[/bold]review first[/dim]")
+    replace_mode = Prompt.ask("Replace mode", choices=["F", "A", "P"], default="P").upper()
+    
+    # Build mask based on scope and match mode
+    if col:
+        target_df = df[[col]]
+    else:
+        target_df = df
+    
+    if match_mode == "E":
+        if case_sensitive:
+            mask = target_df == find_str
+        else:
+            mask = target_df.astype(str).str.lower() == find_str.lower()
+    elif match_mode == "C":
+        if case_sensitive:
+            mask = target_df.astype(str).str.contains(find_str, regex=False, na=False)
+        else:
+            mask = target_df.astype(str).str.contains(find_str, case=False, regex=False, na=False)
+    else:  # Regex
+        mask = target_df.astype(str).str.contains(find_str, case=case_sensitive, regex=True, na=False)
+    
+    # Count matches
+    if col:
+        match_count = mask[col].sum()
+    else:
+        match_count = mask.any(axis=1).sum()
+    
+    console.print(f"\n[cyan]Found {match_count:,} cells matching '{find_str}'.[/cyan]")
+    
+    if match_count == 0:
+        return df
+    
+    # Show preview of what will change
+    if col:
+        preview_rows = df[mask[col]].head(5)
+    else:
+        preview_mask = mask.any(axis=1)
+        preview_rows = df[preview_mask].head(5)
+    
+    console.print("\n[bold]Preview (first 5 changes):[/bold]")
+    t = Table(box=box.SIMPLE)
+    if col:
+        t.add_column("Row", style="dim", width=5)
+        t.add_column("Column", style="cyan", width=15)
+        t.add_column("Old Value", style="red", min_width=20)
+        t.add_column("New Value", style="green", min_width=20)
+        for idx, row in preview_rows.iterrows():
+            t.add_row(str(idx+1), col, str(row[col])[:30], replace_str)
+    else:
+        # Show all columns that will change
+        t.add_column("Row", style="dim", width=5)
+        t.add_column("Changes", style="white", min_width=40)
+        for idx in preview_rows.index:
+            changed_cols = [c for c in df.columns if mask.loc[idx, c]]
+            change_str = ", ".join([f"{c}: {df.loc[idx, c][:15]}→{replace_str[:15]}" for c in changed_cols[:3]])
+            t.add_row(str(idx+1), change_str)
+    console.print(t)
+    
+    if replace_mode == "P":
+        console.print(f"\n[yellow]{match_count} cells will change.[/yellow]")
+        if Confirm.ask("Proceed with replacement?", default=True):
+            replace_mode = "A"  # All
+        else:
+            return df
+    
+    if replace_mode == "F":
+        # Replace first only
+        if col:
+            first_match_idx = mask[mask[col]].index[0]
+            df.at[first_match_idx, col] = replace_str
+        else:
+            first_match_idx = mask.any(axis=1).idxmax()
+            for c in df.columns:
+                if mask.loc[first_match_idx, c]:
+                    df.at[first_match_idx, c] = replace_str
+                    break
+        console.print(f"[green]✔ Replaced 1 cell.[/green]")
+    else:  # All
+        if col:
+            df.loc[mask[col], col] = replace_str
+        else:
+            for c in df.columns:
+                df.loc[mask[c], c] = replace_str
+        console.print(f"[green]✔ Replaced {match_count:,} cells.[/green]")
+    
+    show_preview(df, n=5, title="After Replace")
+    return df
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  FREEZE / FOCUS VIEW (1.4)                                         ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+# Store focus columns in session
+_focus_columns: dict = {}
+
+
+def op_focus_view(sess: Session) -> None:
+    """Focus mode - select columns to always show in preview."""
+    global _focus_columns
+    df = sess.df
+    console.print(Rule("[bold]Focus View (Freeze Columns)[/bold]"))
+    
+    show_columns(df, compact=True)
+    
+    console.print("\n[bold]Current focus columns:[/bold]")
+    current = _focus_columns.get(sess.active, [])
+    if current:
+        console.print(f"  [cyan]{', '.join(current)}[/cyan]")
+    else:
+        console.print("  [dim]None (showing all columns)[/dim]")
+    
+    console.print("\n[dim]Options: [bold]S[/bold]et focus columns  [bold]C[/bold]lear  [bold]V[/bold]iew with focus  [bold]0[/bold] back[/dim]")
+    action = Prompt.ask("Action", choices=["S", "C", "V", "0"]).upper()
+    
+    if action == "0":
+        return
+    
+    if action == "C":
+        _focus_columns.pop(sess.active, None)
+        console.print("[dim]Focus cleared.[/dim]")
+        return
+    
+    if action == "S":
+        cols = ask_cols("Columns to focus on (comma-sep)", df)
+        if not cols:
+            console.print("[red]No columns selected.[/red]")
+            return
+        _focus_columns[sess.active] = cols
+        console.print(f"[green]✔ Focus set to: {', '.join(cols)}[/green]")
+        return
+    
+    if action == "V":
+        current = _focus_columns.get(sess.active, [])
+        if not current:
+            console.print("[yellow]No focus columns set. Use S to set first.[/yellow]")
+            return
+        show_preview(df, cols=current, title=f"Focus View: {', '.join(current)}")
+        return
+
+
+def op_pin_column(sess: Session) -> None:
+    """Pin mode - always show column A alongside view."""
+    df = sess.df
+    console.print(Rule("[bold]Pin Column (Always Visible)[/bold]"))
+    
+    if len(df.columns) == 0:
+        console.print("[red]No columns to pin.[/red]")
+        return
+    
+    # Default to first column (like Excel's freeze panes)
+    default_col = df.columns[0]
+    show_columns(df, compact=True)
+    
+    col_input = Prompt.ask("Column to pin (letter/name, default=first)", default=default_col)
+    col = resolve(col_input, df)
+    
+    if not col:
+        console.print("[red]Column not found.[/red]")
+        return
+    
+    # Show preview with pinned column first
+    pinned_cols = [col] + [c for c in df.columns if c != col]
+    show_preview(df, cols=pinned_cols, title=f"Pinned: {col}")
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  ROW-LEVEL EDIT (1.5)                                              ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+def op_edit_row(sess: Session) -> pd.DataFrame:
+    """Edit a specific row's cell values."""
+    df = sess.df
+    console.print(Rule("[bold]Row-Level Edit[/bold]"))
+    
+    console.print("\n[bold]Find row by:[/bold]")
+    console.print("  [yellow]1[/yellow]  Row number (e.g., 42)")
+    console.print("  [yellow]2[/yellow]  Filter to find row first")
+    mode = Prompt.ask("Mode", choices=["1", "2"], default="1")
+    
+    row_idx = None
+    
+    if mode == "1":
+        row_num = Prompt.ask("Row number", default="1")
+        try:
+            row_idx = int(row_num) - 1  # Convert to 0-based
+            if row_idx < 0 or row_idx >= len(df):
+                console.print(f"[red]Row {row_num} out of range (1-{len(df)}).[/red]")
+                return df
+        except ValueError:
+            console.print("[red]Invalid row number.[/red]")
+            return df
+    else:
+        # Use filter to find the row
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Column to filter on"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        show_unique_inline(df, col)
+        val = Prompt.ask("Value to match")
+        
+        # Find matching rows
+        matches = df[df[col].astype(str).str.lower() == val.lower()]
+        if len(matches) == 0:
+            console.print("[red]No matching rows found.[/red]"); return df
+        elif len(matches) > 1:
+            console.print(f"[yellow]Multiple matches ({len(matches)} rows). Using first one.[/yellow]")
+        
+        row_idx = matches.index[0]
+        console.print(f"[green]Found row at index {row_idx}.[/green]")
+    
+    # Show the row
+    console.print(f"\n[bold]Row {row_idx + 1}:[/bold]")
+    t = Table(box=box.SIMPLE)
+    t.add_column("Column", style="cyan", width=20)
+    t.add_column("Current Value", style="white", min_width=25)
+    t.add_column("New Value", style="yellow", width=25)
+    
+    row_data = df.loc[row_idx]
+    for col_name in df.columns:
+        current_val = row_data[col_name]
+        display_val = str(current_val)[:50] if pd.notna(current_val) else "[null]"
+        t.add_row(col_name, display_val, "")
+    console.print(t)
+    
+    # Edit options
+    console.print("\n[dim]Options: [bold]E[/bold]dit a cell  [bold]D[/bold]one  [bold]0[/bold] cancel[/dim]")
+    
+    while True:
+        action = Prompt.ask("Action", choices=["E", "D", "0"]).upper()
+        
+        if action == "0":
+            return df
+        
+        if action == "D":
+            console.print(f"[green]✔ Row {row_idx + 1} edited.[/green]")
+            return df
+        
+        if action == "E":
+            col = resolve(Prompt.ask("Column to edit"), df)
+            if not col:
+                console.print("[red]Column not found.[/red]")
+                continue
+            
+            current = row_data[col]
+            console.print(f"Current value: [cyan]{current}[/cyan]")
+            new_val = Prompt.ask("New value (blank = null)").strip()
+            
+            # Convert to appropriate type
+            if new_val == "":
+                df.at[row_idx, col] = None
+            else:
+                # Try to infer type
+                try:
+                    if '.' in new_val:
+                        df.at[row_idx, col] = float(new_val)
+                    else:
+                        df.at[row_idx, col] = int(new_val)
+                except ValueError:
+                    df.at[row_idx, col] = new_val
+            
+            console.print(f"[green]✔ Updated {col} = {new_val if new_val else 'null'}[/green]")
+            # Refresh row_data
+            row_data = df.loc[row_idx]
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  CALCULATED COLUMNS LIBRARY (1.6)                                 ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+def op_calculated_columns(sess: Session) -> pd.DataFrame:
+    """Pre-built formula templates for common calculations."""
+    df = sess.df
+    console.print(Rule("[bold]Calculated Columns Library[/bold]"))
+    
+    templates = {
+        "1": ("Age from birthdate", "Calculate age in years from a date column"),
+        "2": ("Days since / until", "Days between date column and today"),
+        "3": ("Percent of total", "Value / column_sum * 100"),
+        "4": ("Rank within group", "Rank column A within groups of column B"),
+        "5": ("Running total", "Cumulative sum of a column"),
+        "6": ("Month/Year/Quarter", "Extract month, year, or quarter from date"),
+        "7": ("First/Last word", "Extract first or last word from text"),
+        "8": ("Extract numbers", "Extract numeric values from messy strings"),
+    }
+    
+    console.print("\n[bold]Available Templates:[/bold]")
+    for num, (name, desc) in templates.items():
+        console.print(f"  [yellow]{num}[/yellow]  {name} - [dim]{desc}[/dim]")
+    
+    choice = Prompt.ask("Choose template", choices=list(templates.keys()))
+    
+    new_col = Prompt.ask("Name for new column")
+    if not new_col:
+        console.print("[red]Column name required.[/red]")
+        return df
+    
+    if choice == "1":  # Age from birthdate
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Date of birth column"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        try:
+            df[new_col] = (pd.Timestamp.now() - pd.to_datetime(df[col], errors='coerce')).dt.days / 365.25
+            df[new_col] = df[new_col].round(1)
+            console.print(f"[green]✔ Age calculated in years.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    elif choice == "2":  # Days since/until
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Date column"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        direction = Prompt.ask("Direction: [S]ince (past dates positive) or [U]til (future positive)", 
+                               choices=["S", "U"], default="S").upper()
+        
+        try:
+            days = (pd.to_datetime(df[col], errors='coerce') - pd.Timestamp.now()).dt.days
+            if direction == "S":
+                df[new_col] = -days
+            else:
+                df[new_col] = days
+            console.print(f"[green]✔ Days calculated.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    elif choice == "3":  # Percent of total
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Value column"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        try:
+            total = pd.to_numeric(df[col], errors='coerce').sum()
+            if total == 0:
+                console.print("[red]Total is zero, can't calculate percentage.[/red]"); return df
+            df[new_col] = pd.to_numeric(df[col], errors='coerce') / total * 100
+            df[new_col] = df[new_col].round(2)
+            console.print(f"[green]✔ Percent of total calculated (total={total:,.2f}).[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    elif choice == "4":  # Rank within group
+        show_columns(df, compact=True)
+        val_col = resolve(Prompt.ask("Value column to rank"), df)
+        if not val_col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        group_col_input = Prompt.ask("Group by column (blank = no grouping)").strip()
+        
+        try:
+            if group_col_input:
+                group_col = resolve(group_col_input, df)
+                df[new_col] = df.groupby(group_col, dropna=False)[val_col].rank(method='min', ascending=False)
+            else:
+                df[new_col] = df[val_col].rank(method='min', ascending=False)
+            console.print(f"[green]✔ Rank calculated.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    elif choice == "5":  # Running total
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Column to sum"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        try:
+            df[new_col] = pd.to_numeric(df[col], errors='coerce').cumsum()
+            console.print(f"[green]✔ Running total calculated.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    elif choice == "6":  # Month/Year/Quarter
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Date column"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        extract = Prompt.ask("Extract: [M]onth / [Y]ear / [Q]uarter", 
+                            choices=["M", "Y", "Q"], default="M").upper()
+        
+        try:
+            dt = pd.to_datetime(df[col], errors='coerce')
+            if extract == "M":
+                df[new_col] = dt.dt.month
+            elif extract == "Y":
+                df[new_col] = dt.dt.year
+            else:  # Q
+                df[new_col] = dt.dt.quarter
+            console.print(f"[green]✔ Extracted {extract}.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    elif choice == "7":  # First/Last word
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Text column"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        which = Prompt.ask("Extract: [F]irst word / [L]ast word", 
+                          choices=["F", "L"], default="F").upper()
+        
+        try:
+            if which == "F":
+                df[new_col] = df[col].astype(str).str.split().str[0]
+            else:
+                df[new_col] = df[col].astype(str).str.split().str[-1]
+            console.print(f"[green]✔ Extracted {'first' if which == 'F' else 'last'} word.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    elif choice == "8":  # Extract numbers
+        show_columns(df, compact=True)
+        col = resolve(Prompt.ask("Column to extract numbers from"), df)
+        if not col:
+            console.print("[red]Column not found.[/red]"); return df
+        
+        try:
+            df[new_col] = df[col].astype(str).str.extract(r'(\d+)', expand=False)
+            console.print(f"[green]✔ Numbers extracted.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]"); return df
+    
+    show_preview(df, n=5, title=f"After: {new_col}")
+    return df
+
+
 # ── [1] FILTER ────────────────────────────────────────────────────────────────
 
 def op_filter(sess: Session) -> pd.DataFrame:
