@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Try to import adapter
 try:
-    from integration.adapter import Adapter, get_adapter
+    from shared.integration.adapter import Adapter, get_adapter
     ADAPTER_AVAILABLE = True
 except ImportError:
     ADAPTER_AVAILABLE = False

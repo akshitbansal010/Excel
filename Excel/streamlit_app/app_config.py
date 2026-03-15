@@ -21,8 +21,8 @@ APP_VERSION = "2.0"
 APP_DESCRIPTION = "Excel Power, Python Speed"
 
 # Filter operators
-NUMERIC_OPERATORS = ["==", "!=", ">", "<", ">=", "<=", "is_null", "is_not_null"]
-TEXT_OPERATORS = ["==", "!=", "contains", "startswith", "endswith", "is_null", "is_not_null", "is_blank"]
+NUMERIC_OPERATORS = ["==", "!=", ">", "<", ">=", "<=", "is_null", "is_not_null", "in"]
+TEXT_OPERATORS = ["==", "!=", "contains", "startswith", "endswith", "is_null", "is_not_null", "is_blank", "in"]
 
 # Undo history limit
 MAX_UNDO_HISTORY = 20

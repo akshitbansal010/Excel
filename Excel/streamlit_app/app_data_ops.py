@@ -456,17 +456,54 @@ def undo_operation():
     
     # Handle different operation types
     action = op.get('action')
+    data = op.get('data', {})
+    table_name = st.session_state.current_table
     
     if action == 'add_filter':
         # Remove the filter that was added
         filters = st.session_state.active_filters
-        f_data = op.get('data', {})
         for i, f in enumerate(filters):
-            if (f['column'] == f_data.get('column') and 
-                f['operator'] == f_data.get('operator') and
-                f['value'] == f_data.get('value')):
+            if (f['column'] == data.get('column') and 
+                f['operator'] == data.get('operator') and
+                f['value'] == data.get('value')):
                 filters.pop(i)
                 break
+    
+    elif action == 'remove_filter':
+        # Re-add the removed filter
+        st.session_state.active_filters.append({
+            'column': data.get('column'),
+            'operator': data.get('operator'),
+            'value': data.get('value')
+        })
+    
+    elif action == 'sort':
+        # Clearing sort is often safer than trying to restore previous state if not tracked
+        st.session_state.sort_column = None
+        st.session_state.sort_ascending = True
+    
+    elif action == 'add_column' or action == 'add_column_sql':
+        if table_name in st.session_state.session_tables:
+            col_name = data.get('column')
+            st.session_state.session_tables[table_name].drop(columns=[col_name], inplace=True)
+            if table_name in st.session_state.working_data:
+                st.session_state.working_data[table_name].drop(columns=[col_name], inplace=True)
+    
+    elif action == 'delete_column':
+        if table_name in st.session_state.session_tables:
+            col_name = data.get('column')
+            col_data = pd.Series(data.get('data'))
+            st.session_state.session_tables[table_name][col_name] = col_data
+            if table_name in st.session_state.working_data:
+                st.session_state.working_data[table_name][col_name] = col_data
+    
+    elif action == 'rename_column':
+        if table_name in st.session_state.session_tables:
+            old_name = data.get('old_name')
+            new_name = data.get('new_name')
+            st.session_state.session_tables[table_name].rename(columns={old_name: new_name}, inplace=True)
+            if table_name in st.session_state.working_data:
+                st.session_state.working_data[table_name].rename(columns={old_name: new_name}, inplace=True)
     
     # Reset page
     st.session_state.page = 1
@@ -485,14 +522,49 @@ def redo_operation():
     
     # Handle different operation types
     action = op.get('action')
+    data = op.get('data', {})
+    table_name = st.session_state.current_table
     
     if action == 'add_filter':
         # Re-add the filter
-        f_data = op.get('data', {})
         st.session_state.active_filters.append({
-            'column': f_data.get('column'),
-            'operator': f_data.get('operator'),
-            'value': f_data.get('value')
+            'column': data.get('column'),
+            'operator': data.get('operator'),
+            'value': data.get('value')
         })
+    
+    elif action == 'remove_filter':
+        # Re-remove the filter
+        filters = st.session_state.active_filters
+        for i, f in enumerate(filters):
+            if (f['column'] == data.get('column') and 
+                f['operator'] == data.get('operator') and
+                f['value'] == data.get('value')):
+                filters.pop(i)
+                break
+    
+    elif action == 'sort':
+        st.session_state.sort_column = data.get('column')
+        st.session_state.sort_ascending = data.get('ascending', True)
+    
+    elif action == 'add_column':
+        add_column(data.get('column'), data.get('default_value'))
+        # Pop from undo stack because add_column adds it back
+        st.session_state.undo_stack.pop()
+    
+    elif action == 'delete_column':
+        delete_column(data.get('column'))
+        # Pop from undo stack because delete_column adds it back
+        st.session_state.undo_stack.pop()
+    
+    elif action == 'rename_column':
+        rename_column(data.get('old_name'), data.get('new_name'))
+        # Pop from undo stack because rename_column adds it back
+        st.session_state.undo_stack.pop()
+    
+    elif action == 'add_column_sql':
+        add_column_from_expression(data.get('expression'), data.get('column'))
+        # Pop from undo stack because add_column_from_expression adds it back
+        st.session_state.undo_stack.pop()
     
     st.session_state.page = 1

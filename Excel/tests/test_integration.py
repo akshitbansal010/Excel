@@ -18,10 +18,10 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import integration modules
-from integration.adapter import Adapter, get_adapter
-from integration.column_resolver import ColumnResolver
-from integration.session import SessionManager
+# Import shared integration modules
+from shared.integration.adapter import Adapter, get_adapter
+from shared.integration.column_resolver import ColumnResolver
+from shared.integration.session import SessionManager
 
 
 # =============================================================================

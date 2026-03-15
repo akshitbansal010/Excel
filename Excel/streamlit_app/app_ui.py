@@ -494,10 +494,15 @@ def render_pagination(total_rows: int):
         st.write(f"of {total_pages}")
     
     with col4:
+        page_size_options = [50, 100, 200, 500]
+        try:
+            size_index = page_size_options.index(page_size)
+        except ValueError:
+            size_index = 1  # Default to 100
         new_size = st.selectbox(
             "Rows per page",
-            [50, 100, 200, 500],
-            index=[50, 100, 200, 500].index(page_size) if page_size in [50, 100, 200, 500] else 1,
+            page_size_options,
+            index=size_index,
             key="page_size_select"
         )
         if new_size != page_size:
@@ -568,8 +573,11 @@ def render_filter_sort_tab():
     with col2:
         st.markdown("#### ⬆️ Sort")
         
-        if st.session_state.sort_column:
-            st.caption(f"Currently sorted by: **{st.session_state.sort_column}**")
+        # Get current sort column from session state (default to empty string if None)
+        current_sort = st.session_state.sort_column if st.session_state.sort_column else ""
+        
+        if current_sort:
+            st.caption(f"Currently sorted by: **{current_sort}**")
             st.caption(f"Direction: {'Ascending' if st.session_state.sort_ascending else 'Descending'}")
             
             if st.button("Clear Sort"):
@@ -578,9 +586,25 @@ def render_filter_sort_tab():
         
         st.markdown("**Add Sort:**")
         
+        # Get column index for the selectbox - use try-except to handle edge cases
+        sort_options = [""] + list(df.columns)
+        
+        # Ensure we have at least one option and index is valid
+        if not sort_options:
+            sort_options = [""]
+        
+        try:
+            sort_index = sort_options.index(current_sort) if current_sort in sort_options else 0
+        except (ValueError, TypeError):
+            sort_index = 0
+        
+        # Ensure index is within valid range
+        sort_index = min(max(0, sort_index), len(sort_options) - 1)
+        
         sort_col = st.selectbox(
             "Sort by",
-            [""] + list(df.columns),
+            sort_options,
+            index=sort_index,
             key="sort_column"
         )
         

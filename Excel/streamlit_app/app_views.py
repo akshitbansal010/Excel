@@ -66,10 +66,23 @@ def load_view(view_name: str) -> bool:
     
     view_config = st.session_state.saved_views[view_name]
     
+    # Get current table and validate sort column exists
+    table_name = st.session_state.current_table
+    df = st.session_state.session_tables.get(table_name) if table_name else None
+    
     # Apply view settings
     st.session_state.active_filters = view_config.get('filters', []).copy()
-    st.session_state.sort_column = view_config.get('sort_column')
-    st.session_state.sort_ascending = view_config.get('sort_ascending', True)
+    
+    # Validate sort_column exists in current table
+    sort_col = view_config.get('sort_column')
+    if df is not None and sort_col is not None and sort_col not in df.columns:
+        # Clear sort if column doesn't exist in current table
+        st.session_state.sort_column = None
+        st.session_state.sort_ascending = True
+    else:
+        st.session_state.sort_column = sort_col
+        st.session_state.sort_ascending = view_config.get('sort_ascending', True)
+    
     st.session_state.selected_columns = view_config.get('selected_columns')
     st.session_state.page_size = view_config.get('page_size', 100)
     st.session_state.page = 1

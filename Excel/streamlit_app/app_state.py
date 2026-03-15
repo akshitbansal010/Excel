@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, List
 
 # Try to import adapter - from sibling integration folder
 try:
-    from integration.adapter import Adapter, get_adapter
+    from shared.integration.adapter import Adapter, get_adapter
     ADAPTER_AVAILABLE = True
 except ImportError:
     ADAPTER_AVAILABLE = False

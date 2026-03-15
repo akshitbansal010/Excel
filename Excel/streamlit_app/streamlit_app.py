@@ -1,6 +1,6 @@
 """
 DataEngine Pro - Enhanced Streamlit Web UI (Excel-like Experience)
-=====================================================================
+===================================================================
 
 A comprehensive visual interface for DataEngine Pro with:
 - Database connection (SQLite, CSV, Excel)
@@ -13,8 +13,15 @@ A comprehensive visual interface for DataEngine Pro with:
 - Go back to original data functionality
 
 Usage:
-    streamlit run ui/web/streamlit_app.py
+    cd Excel
+    streamlit run streamlit_app/streamlit_app.py
 """
+
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 
@@ -26,10 +33,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Import all modules
-import app_config
-import app_state
-import app_ui
+# Import all modules (from same package)
+import streamlit_app.app_config as app_config
+import streamlit_app.app_state as app_state
+import streamlit_app.app_ui as app_ui
 
 
 # =============================================================================

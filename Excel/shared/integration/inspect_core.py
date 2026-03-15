@@ -276,7 +276,7 @@ def print_report():
     
     # Try to import and use the adapter
     try:
-        from integration.adapter import Adapter, get_adapter
+        from shared.integration.adapter import Adapter, get_adapter
         
         print("\n  Testing adapter initialization...")
         adapter = get_adapter()
